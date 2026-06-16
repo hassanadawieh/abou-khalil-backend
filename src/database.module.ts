@@ -17,6 +17,7 @@ import { Expense } from './expenses/entities/expense.entity';
 import { Notification } from './notifications/entities/notification.entity';
 import { EmployeeSalary } from './employee-salaries/entities/employee-salary.entity';
 import { PermissionSeeder } from './database/seeders/permission.seeder';
+import { UserSeeder } from './database/seeders/user.seeder';
 import { SeedCommand } from './database/commands/seed.command';
 
 @Module({
@@ -49,9 +50,9 @@ import { SeedCommand } from './database/commands/seed.command';
       synchronize: true,
       logging: true,
     }),
-    TypeOrmModule.forFeature([Permission, Role]),
+    TypeOrmModule.forFeature([Permission, Role, User]),
   ],
-  providers: [PermissionSeeder, SeedCommand],
+  providers: [PermissionSeeder, UserSeeder, SeedCommand],
   exports: [TypeOrmModule],
 })
 export class DatabaseModule {}

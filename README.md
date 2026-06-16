@@ -372,6 +372,15 @@ The seed process:
 4. Creates permissions for all resources (`create`, `read`, `update`, `delete` × 8 resources)
 5. Assigns all permissions to `superAdmin`
 6. Leaves `admin` with no permissions by default
+7. Creates a default **superAdmin user** if one does not exist
+
+**Default admin credentials** (override in `.env`):
+
+| Variable | Default |
+|----------|---------|
+| `SEED_ADMIN_USERNAME` | `hassan` |
+| `SEED_ADMIN_PASSWORD` | `P@ssw0rd` |
+| `SEED_ADMIN_PHONE` | `0000000000` |
 
 **Seeded permission resources:** `users`, `roles`, `employees`, `customers`, `suppliers`, `items`, `invoices`, `balance`
 

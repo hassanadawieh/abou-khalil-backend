@@ -2,12 +2,14 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { RolesService } from './roles/roles.service';
 import { PermissionSeeder } from './database/seeders/permission.seeder';
+import { UserSeeder } from './database/seeders/user.seeder';
 import { getDataSourceToken } from '@nestjs/typeorm';
 
 async function seed() {
   const app = await NestFactory.create(AppModule);
   const rolesService = app.get(RolesService);
   const permissionSeeder = app.get(PermissionSeeder);
+  const userSeeder = app.get(UserSeeder);
   const dataSource = app.get(getDataSourceToken());
 
   try {
@@ -44,6 +46,9 @@ async function seed() {
     // Seed permissions and assign to roles
     console.log('\n--- Seeding Permissions ---');
     await permissionSeeder.seed();
+
+    console.log('\n--- Seeding Default Admin User ---');
+    await userSeeder.seed();
 
     console.log('\n✓ Seed completed successfully');
     await app.close();
