@@ -19,13 +19,6 @@ export class UserSeeder {
     const password = process.env.SEED_ADMIN_PASSWORD || 'P@ssw0rd';
     const phoneNumber = process.env.SEED_ADMIN_PHONE || '0000000000';
 
-    const existingUser = await this.userRepository.findOneBy({ username });
-
-    if (existingUser) {
-      console.log(`User '${username}' already exists — skipping`);
-      return;
-    }
-
     const superAdminRole = await this.roleRepository.findOneBy({
       name: 'superAdmin',
     });
@@ -36,15 +29,37 @@ export class UserSeeder {
       );
     }
 
+    const existingUser = await this.userRepository.findOne({
+      where: { username },
+      relations: ['role'],
+    });
+
+    if (existingUser) {
+      if (existingUser.role_id === superAdminRole.id) {
+        console.log(
+          `User '${username}' already exists with superAdmin role — skipping`,
+        );
+        return;
+      }
+
+      existingUser.role_id = superAdminRole.id;
+      await this.userRepository.save(existingUser);
+      console.log(`Updated user '${username}' to superAdmin role`);
+      return;
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = this.userRepository.create({
       username,
       phoneNumber,
       password: hashedPassword,
       role_id: superAdminRole.id,
+      role: superAdminRole,
     });
 
     await this.userRepository.save(user);
-    console.log(`Created default superAdmin user: ${username}`);
+    console.log(
+      `Created user '${username}' with superAdmin role (role_id: ${superAdminRole.id})`,
+    );
   }
 }

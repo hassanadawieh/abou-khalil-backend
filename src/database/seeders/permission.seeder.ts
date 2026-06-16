@@ -19,6 +19,36 @@ export class PermissionSeeder {
   async seed() {
     console.log('Starting permission seeder...');
 
+    const existingCount = await this.permissionRepository.count();
+    if (existingCount > 0) {
+      console.log(
+        `${existingCount} permissions already exist — syncing role assignments only`,
+      );
+
+      const allPermissions = await this.permissionRepository.find();
+      const superAdminRole = await this.roleRepository.findOneBy({
+        name: 'superAdmin',
+      });
+      const adminRole = await this.roleRepository.findOneBy({ name: 'admin' });
+
+      if (superAdminRole) {
+        superAdminRole.permissions = allPermissions;
+        await this.roleRepository.save(superAdminRole);
+        console.log(
+          `Assigned ${allPermissions.length} permissions to superAdmin role`,
+        );
+      }
+
+      if (adminRole) {
+        adminRole.permissions = [];
+        await this.roleRepository.save(adminRole);
+        console.log('Admin role has no permissions by default');
+      }
+
+      console.log('Permission seeder completed successfully!');
+      return;
+    }
+
     // Define all resources that need permissions
     const resources = [
       'users',

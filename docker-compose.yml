@@ -67,6 +67,27 @@ services:
     command: ["node", "dist/seed.js"]
     restart: "no"
 
+  seed-user:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles:
+      - seed-user
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-abk_db}
+      SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-hassan}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-P@ssw0rd}
+      SEED_ADMIN_PHONE: ${SEED_ADMIN_PHONE:-0000000000}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["node", "dist/seed-user.js"]
+    restart: "no"
+
 volumes:
   postgres_data:
   uploads_data:
