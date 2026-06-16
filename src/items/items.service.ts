@@ -175,7 +175,7 @@ export class ItemsService {
 
   // Image Upload Methods
   private getUploadDir(): string {
-    return _path.join(process.cwd(), 'src', 'public', 'uploads', 'items');
+    return _path.join(process.cwd(), 'public', 'uploads', 'items');
   }
 
   private generateImageFilename(itemId: number, originalName: string): string {

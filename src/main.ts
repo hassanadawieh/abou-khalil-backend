@@ -34,11 +34,8 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, document);
 
   await app.listen(process.env.PORT ?? 6000);
-  console.log(
-    `Application running on http://localhost:${process.env.PORT ?? 5000}`,
-  );
-  console.log(
-    `API Documentation available at http://localhost:${process.env.PORT ?? 5000}/api/docs`,
-  );
+  const port = process.env.PORT ?? 6000;
+  console.log(`Application running on http://localhost:${port}`);
+  console.log(`API Documentation available at http://localhost:${port}/api/docs`);
 }
 void bootstrap();

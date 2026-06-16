@@ -27,7 +27,7 @@ import { SeedCommand } from './database/commands/seed.command';
       port: parseInt(process.env.DB_PORT || '5432', 10),
       username: process.env.DB_USERNAME || 'postgres',
       password: String(process.env.DB_PASSWORD || 'postgres'),
-      database: process.env.DB_NAME || 'my_new_db',
+      database: process.env.DB_NAME || 'abk_db',
       entities: [
         Role,
         User,
