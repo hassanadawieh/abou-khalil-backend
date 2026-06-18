@@ -11,6 +11,7 @@ A NestJS backend for managing inventory, sales, customers, suppliers, employees,
 - [Architecture](#architecture)
 - [Getting Started](#getting-started)
 - [Docker](#docker)
+- [Database Backups](#database-backups)
 - [Environment Variables](#environment-variables)
 - [Database & Schema Sync](#database--schema-sync)
 - [Seeding](#seeding)
@@ -275,6 +276,79 @@ docker compose up -d --build
 ```
 
 Data persists in Docker volumes (`postgres_data`, `uploads_data`) across rebuilds.
+
+---
+
+## Database Backups
+
+Automated daily PostgreSQL backups at **1:00 AM** (server local time). Each run replaces the previous dump — only the latest backup is kept.
+
+### Backup location on server
+
+```
+/var/www/abou-khalil-backend/backups/
+├── abk_db_latest.sql.gz   ← latest database dump
+└── backup.log             ← backup history log
+```
+
+(Replace `/var/www/abou-khalil-backend` with your project path.)
+
+### Setup on the server (one time)
+
+```bash
+cd /var/www/abou-khalil-backend
+git pull
+
+chmod +x scripts/backup-db.sh scripts/install-backup-cron.sh scripts/restore-db.sh
+
+# Install cron job: every day at 1:00 AM
+./scripts/install-backup-cron.sh
+```
+
+Verify cron is installed:
+
+```bash
+crontab -l
+```
+
+You should see:
+
+```
+0 1 * * * /var/www/abou-khalil-backend/scripts/backup-db.sh
+```
+
+### Run a backup manually
+
+```bash
+./scripts/backup-db.sh
+```
+
+### Check backup file
+
+```bash
+ls -lh backups/abk_db_latest.sql.gz
+tail -20 backups/backup.log
+```
+
+### Restore from backup
+
+```bash
+./scripts/restore-db.sh
+```
+
+Type `RESTORE` when prompted. This overwrites the current database with the latest dump.
+
+### Custom schedule
+
+```bash
+CRON_SCHEDULE="0 2 * * *" ./scripts/install-backup-cron.sh
+```
+
+Remove and re-add cron manually if you need to change an existing entry:
+
+```bash
+crontab -e
+```
 
 ---
 
@@ -758,6 +832,8 @@ nest-app/
 │
 ├── public/                        # Static uploads (images)
 ├── docker/                        # Docker entrypoint script
+├── scripts/                       # backup-db.sh, restore-db.sh, cron installer
+├── backups/                       # daily DB dumps (on server, not in git)
 ├── Dockerfile                     # Multi-stage production build
 ├── docker-compose.yml             # API + PostgreSQL stack
 ├── .env.example                   # Environment template
