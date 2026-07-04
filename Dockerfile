@@ -23,6 +23,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 RUN apk add --no-cache postgresql-client
 
 COPY --from=builder /app/dist ./dist
+COPY scripts ./scripts
 
 RUN mkdir -p public/uploads/items
 

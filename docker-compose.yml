@@ -37,7 +37,7 @@ services:
       DB_USERNAME: ${DB_USERNAME:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DB_NAME: ${DB_NAME:-abk_db}
-      CORS_ORIGIN: ${CORS_ORIGIN:-https://abou-khalil-frontend.vercel.app}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://abou-khalil.vercel.app,http://localhost:3000}
       SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-hassan}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-P@ssw0rd}
       SEED_ADMIN_PHONE: ${SEED_ADMIN_PHONE:-0000000000}
@@ -83,6 +83,7 @@ services:
       SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-hassan}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-P@ssw0rd}
       SEED_ADMIN_PHONE: ${SEED_ADMIN_PHONE:-0000000000}
+      SEED_ADMIN_RESET_PASSWORD: ${SEED_ADMIN_RESET_PASSWORD:-false}
     depends_on:
       db:
         condition: service_healthy
