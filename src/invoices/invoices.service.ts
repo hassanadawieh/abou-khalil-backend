@@ -2,10 +2,12 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Invoice } from './entities/invoice.entity';
+import { QueryFailedError, Repository } from 'typeorm';
+import { Invoice, InvoiceType } from './entities/invoice.entity';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { InvoiceItem, ItemType } from '../items/entities/invoice-item.entity';
@@ -26,6 +28,8 @@ type InvoiceItemInput = {
 
 @Injectable()
 export class InvoicesService {
+  private readonly logger = new Logger(InvoicesService.name);
+
   constructor(
     @InjectRepository(Invoice)
     private invoicesRepository: Repository<Invoice>,
@@ -40,6 +44,30 @@ export class InvoicesService {
     @InjectRepository(CustomerHistoryEntry)
     private customerHistoryRepository: Repository<CustomerHistoryEntry>,
   ) {}
+
+  private rethrowDbError(error: unknown): never {
+    if (
+      error instanceof BadRequestException ||
+      error instanceof NotFoundException
+    ) {
+      throw error;
+    }
+
+    if (error instanceof QueryFailedError) {
+      const driverError = error.driverError as { detail?: string; message?: string };
+      const detail = driverError?.detail || driverError?.message || error.message;
+      this.logger.error(`Invoice DB error: ${detail}`);
+      throw new BadRequestException(detail);
+    }
+
+    this.logger.error(
+      `Invoice unexpected error: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      error instanceof Error ? error.stack : undefined,
+    );
+    throw new InternalServerErrorException('Failed to process invoice');
+  }
 
   private async applyCustomerAmountDelta(
     customerRepo: Repository<Customer>,
@@ -187,122 +215,171 @@ export class InvoicesService {
       itemData.item_id,
     );
 
-    const invoiceItem = invoiceItemsRepo.create({
+    const place =
+      typeof itemData.place === 'string' && itemData.place.trim() !== ''
+        ? itemData.place.trim()
+        : undefined;
+
+    // Use insert() to avoid TypeORM relation/FK column conflicts.
+    await invoiceItemsRepo.insert({
       invoice_id: invoiceId,
       item_type: itemData.item_type,
       quantity: itemData.quantity,
-      unit_price,
-      place:
-        typeof itemData.place === 'string' && itemData.place.trim() !== ''
-          ? itemData.place.trim()
-          : undefined,
+      unit_price: Number(unit_price) || 0,
+      place,
+      ceramic_item_id:
+        itemData.item_type === ItemType.CERAMIC ? itemData.item_id : undefined,
+      healthy_item_id:
+        itemData.item_type === ItemType.HEALTHY ? itemData.item_id : undefined,
     });
+  }
 
-    if (itemData.item_type === ItemType.CERAMIC) {
-      invoiceItem.ceramic_item_id = itemData.item_id;
-    } else if (itemData.item_type === ItemType.HEALTHY) {
-      invoiceItem.healthy_item_id = itemData.item_id;
-    }
+  private resolveItemType(value: unknown): ItemType {
+    const normalized = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    if (normalized === ItemType.CERAMIC) return ItemType.CERAMIC;
+    if (normalized === ItemType.HEALTHY) return ItemType.HEALTHY;
+    throw new BadRequestException(`Invalid item type: ${String(value)}`);
+  }
 
-    await invoiceItemsRepo.save(invoiceItem);
+  private resolveInvoiceType(value: unknown): InvoiceType {
+    const normalized = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    if (normalized === InvoiceType.CERAMIC) return InvoiceType.CERAMIC;
+    if (normalized === InvoiceType.HEALTHY) return InvoiceType.HEALTHY;
+    throw new BadRequestException(`Invalid invoice type: ${String(value)}`);
   }
 
   async create(createInvoiceDto: CreateInvoiceDto): Promise<Invoice> {
-    if (
-      !createInvoiceDto.items ||
-      !Array.isArray(createInvoiceDto.items) ||
-      createInvoiceDto.items.length === 0
-    ) {
-      throw new BadRequestException('Invoice must include at least one item');
-    }
+    try {
+      if (
+        !createInvoiceDto.items ||
+        !Array.isArray(createInvoiceDto.items) ||
+        createInvoiceDto.items.length === 0
+      ) {
+        throw new BadRequestException('Invoice must include at least one item');
+      }
 
-    // Calculate total_amount = amount - discount + delivery_price
-    const amount = Number(createInvoiceDto.amount) || 0;
-    const discount = Number(createInvoiceDto.discount) || 0;
-    const delivery_price = Number(createInvoiceDto.delivery_price) || 0;
-    const total_amount = Number((amount - discount + delivery_price).toFixed(2));
+      const amount = Number(createInvoiceDto.amount) || 0;
+      const discount = Number(createInvoiceDto.discount) || 0;
+      const delivery_price = Number(createInvoiceDto.delivery_price) || 0;
+      const total_amount = Number(
+        (amount - discount + delivery_price).toFixed(2),
+      );
+      const customerId = Number(createInvoiceDto.customer_id);
+      const invoiceType = this.resolveInvoiceType(createInvoiceDto.type);
 
-    if (total_amount < 0) {
-      throw new BadRequestException('Discount cannot be greater than amount');
-    }
+      if (!customerId) {
+        throw new BadRequestException('Customer is required');
+      }
+      if (total_amount < 0) {
+        throw new BadRequestException('Discount cannot be greater than amount');
+      }
 
-    if (!createInvoiceDto.customer_id) {
-      throw new BadRequestException('Customer is required');
-    }
+      // Fail fast with clear errors before opening the transaction.
+      const customer = await this.customersRepository.findOne({
+        where: { id: customerId },
+      });
+      if (!customer) {
+        throw new NotFoundException(`Customer with ID ${customerId} not found`);
+      }
 
-    // Use a transaction so invoice + items + stock updates are atomic
-    const savedInvoiceId = await this.invoicesRepository.manager.transaction(
-      async (manager) => {
-        const invoicesRepo = manager.getRepository(Invoice);
-        const invoiceItemsRepo = manager.getRepository(InvoiceItem);
-        const ceramicRepo = manager.getRepository(CeramicItem);
-        const healthyRepo = manager.getRepository(HealthyItem);
-        const customerRepo = manager.getRepository(Customer);
-        const historyRepo = manager.getRepository(CustomerHistoryEntry);
+      const normalizedItems: InvoiceItemInput[] = [];
+      for (const itemData of createInvoiceDto.items) {
+        const itemType = this.resolveItemType(itemData.item_type);
+        const itemId = Number(itemData.item_id);
+        const quantity = this.normalizeQuantity(itemData.quantity);
 
-        // Generate invoice number
-        const lastInvoice = await invoicesRepo.find({
-          order: { id: 'DESC' as const },
-          take: 1,
-        });
-        const nextNumber = (lastInvoice[0]?.id || 0) + 1;
-        const invoice_number = `AKC-${String(nextNumber).padStart(6, '0')}`;
-
-        const invoice = invoicesRepo.create({
-          invoice_number,
-          amount,
-          discount,
-          delivery_price,
-          total_amount,
-          type: createInvoiceDto.type,
-          customer_id: Number(createInvoiceDto.customer_id),
-        });
-
-        const savedInvoice = await invoicesRepo.save(invoice);
-        await this.applyCustomerAmountDelta(
-          customerRepo,
-          savedInvoice.customer_id,
-          Number(savedInvoice.total_amount),
-        );
-        await this.upsertInvoiceCustomerHistory(
-          historyRepo,
-          savedInvoice.id,
-          savedInvoice.customer_id,
-          Number(savedInvoice.total_amount),
-        );
-
-        // Create invoice items + decrement stock
-        for (const itemData of createInvoiceDto.items) {
-          const normalizedItem: InvoiceItemInput = {
-            item_type: itemData.item_type as ItemType,
-            item_id: Number(itemData.item_id),
-            quantity: this.normalizeQuantity(itemData.quantity),
-            place: (itemData as { place?: string }).place,
-          };
-
-          await this.adjustStock(
-            ceramicRepo,
-            healthyRepo,
-            normalizedItem.item_type,
-            normalizedItem.item_id,
-            -normalizedItem.quantity,
-          );
-
-          await this.createInvoiceItemRecord(
-            invoiceItemsRepo,
-            ceramicRepo,
-            healthyRepo,
-            savedInvoice.id,
-            normalizedItem,
+        if (!itemId) {
+          throw new BadRequestException('Each invoice item needs item_id');
+        }
+        if (itemType !== (invoiceType as unknown as ItemType)) {
+          throw new BadRequestException(
+            `Item type ${itemType} does not match invoice type ${invoiceType}`,
           );
         }
 
-        return savedInvoice.id;
-      },
-    );
+        normalizedItems.push({
+          item_type: itemType,
+          item_id: itemId,
+          quantity,
+          place: (itemData as { place?: string }).place,
+        });
+      }
 
-    // Reload with customer and items details
-    return this.findOne(savedInvoiceId);
+      const savedInvoiceId = await this.invoicesRepository.manager.transaction(
+        async (manager) => {
+          const invoicesRepo = manager.getRepository(Invoice);
+          const invoiceItemsRepo = manager.getRepository(InvoiceItem);
+          const ceramicRepo = manager.getRepository(CeramicItem);
+          const healthyRepo = manager.getRepository(HealthyItem);
+          const customerRepo = manager.getRepository(Customer);
+          const historyRepo = manager.getRepository(CustomerHistoryEntry);
+
+          const lastInvoice = await invoicesRepo.find({
+            order: { id: 'DESC' },
+            take: 1,
+          });
+          const nextNumber = (lastInvoice[0]?.id || 0) + 1;
+          const invoice_number = `AKC-${String(nextNumber).padStart(6, '0')}`;
+
+          const insertResult = await invoicesRepo.insert({
+            invoice_number,
+            amount,
+            discount,
+            delivery_price,
+            total_amount,
+            type: invoiceType,
+            customer_id: customerId,
+          });
+
+          const savedInvoiceId = Number(insertResult.identifiers[0]?.id);
+          if (!savedInvoiceId) {
+            throw new InternalServerErrorException(
+              'Failed to create invoice record',
+            );
+          }
+
+          await this.applyCustomerAmountDelta(
+            customerRepo,
+            customerId,
+            total_amount,
+          );
+          await this.upsertInvoiceCustomerHistory(
+            historyRepo,
+            savedInvoiceId,
+            customerId,
+            total_amount,
+          );
+
+          for (const normalizedItem of normalizedItems) {
+            await this.adjustStock(
+              ceramicRepo,
+              healthyRepo,
+              normalizedItem.item_type,
+              normalizedItem.item_id,
+              -normalizedItem.quantity,
+            );
+
+            await this.createInvoiceItemRecord(
+              invoiceItemsRepo,
+              ceramicRepo,
+              healthyRepo,
+              savedInvoiceId,
+              normalizedItem,
+            );
+          }
+
+          return savedInvoiceId;
+        },
+      );
+
+      return this.findOne(savedInvoiceId);
+    } catch (error) {
+      this.rethrowDbError(error);
+    }
   }
 
   async findAll(): Promise<Invoice[]> {
@@ -397,6 +474,17 @@ export class InvoicesService {
   }
 
   async update(
+    id: number,
+    updateInvoiceDto: UpdateInvoiceDto,
+  ): Promise<Invoice> {
+    try {
+      return await this.updateInternal(id, updateInvoiceDto);
+    } catch (error) {
+      this.rethrowDbError(error);
+    }
+  }
+
+  private async updateInternal(
     id: number,
     updateInvoiceDto: UpdateInvoiceDto,
   ): Promise<Invoice> {
