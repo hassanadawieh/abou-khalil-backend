@@ -2,9 +2,11 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Invoice } from './entities/invoice.entity';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
@@ -26,6 +28,8 @@ type InvoiceItemInput = {
 
 @Injectable()
 export class InvoicesService {
+  private readonly logger = new Logger(InvoicesService.name);
+
   constructor(
     @InjectRepository(Invoice)
     private invoicesRepository: Repository<Invoice>,
@@ -305,7 +309,85 @@ export class InvoicesService {
     return this.findOne(savedInvoiceId);
   }
 
-  private toInvoiceListItem(invoice: Invoice) {
+  private async loadInvoiceItems(invoiceIds: number[]) {
+    if (invoiceIds.length === 0) return [] as Array<Record<string, unknown>>;
+
+    let rows: Array<Record<string, unknown>>;
+    try {
+      rows = await this.invoiceItemsRepository.query(
+        `
+        SELECT
+          id,
+          invoice_id,
+          item_type,
+          ceramic_item_id,
+          healthy_item_id,
+          quantity,
+          place,
+          unit_price
+        FROM invoice_items
+        WHERE invoice_id = ANY($1::int[])
+        ORDER BY id ASC
+        `,
+        [invoiceIds],
+      );
+    } catch {
+      // Older DBs may not have unit_price yet.
+      rows = await this.invoiceItemsRepository.query(
+        `
+        SELECT
+          id,
+          invoice_id,
+          item_type,
+          ceramic_item_id,
+          healthy_item_id,
+          quantity,
+          place
+        FROM invoice_items
+        WHERE invoice_id = ANY($1::int[])
+        ORDER BY id ASC
+        `,
+        [invoiceIds],
+      );
+    }
+
+    return rows.map((row) => {
+      const itemType = String(row.item_type);
+      const ceramicId =
+        row.ceramic_item_id != null ? Number(row.ceramic_item_id) : null;
+      const healthyId =
+        row.healthy_item_id != null ? Number(row.healthy_item_id) : null;
+      const unitPrice =
+        row.unit_price != null ? Number(row.unit_price) : null;
+
+      return {
+        id: Number(row.id),
+        invoice_id: Number(row.invoice_id),
+        item_type: itemType,
+        ceramic_item_id: ceramicId,
+        healthy_item_id: healthyId,
+        item_id: itemType === ItemType.CERAMIC ? ceramicId : healthyId,
+        quantity: Number(row.quantity) || 0,
+        unit_price: unitPrice,
+        price: unitPrice ?? 0,
+        place: (row.place as string | null) ?? null,
+      };
+    });
+  }
+
+  private async loadCustomers(customerIds: number[]) {
+    if (customerIds.length === 0) return new Map<number, Customer>();
+    const customers = await this.customersRepository.find({
+      where: { id: In(customerIds) },
+    });
+    return new Map(customers.map((customer) => [customer.id, customer]));
+  }
+
+  private mapInvoiceRow(
+    invoice: Invoice,
+    customer: Customer | undefined,
+    items: Array<Record<string, unknown>>,
+  ) {
     return {
       id: invoice.id,
       invoice_number: invoice.invoice_number,
@@ -314,125 +396,165 @@ export class InvoicesService {
       delivery_price: Number(invoice.delivery_price) || 0,
       total_amount: Number(invoice.total_amount) || 0,
       type: invoice.type,
-      customer_id: invoice.customer_id,
-      customer: invoice.customer
+      customer_id: Number(invoice.customer_id),
+      customer: customer
         ? {
-            id: invoice.customer.id,
-            firstName: invoice.customer.firstName,
-            lastName: invoice.customer.lastName,
-            phoneNumber1: invoice.customer.phoneNumber1,
-            phoneNumber2: invoice.customer.phoneNumber2,
-            city: invoice.customer.city,
-            amount: Number(invoice.customer.amount) || 0,
+            id: customer.id,
+            firstName: customer.firstName,
+            lastName: customer.lastName,
+            phoneNumber1: customer.phoneNumber1,
+            phoneNumber2: customer.phoneNumber2,
+            city: customer.city,
+            amount: Number(customer.amount) || 0,
           }
         : null,
-      items: (invoice.items ?? []).map((item) => ({
-        id: item.id,
-        invoice_id: item.invoice_id,
-        item_type: item.item_type,
-        ceramic_item_id: item.ceramic_item_id ?? null,
-        healthy_item_id: item.healthy_item_id ?? null,
-        item_id:
-          item.item_type === ItemType.CERAMIC
-            ? item.ceramic_item_id
-            : item.healthy_item_id,
-        quantity: Number(item.quantity) || 0,
-        unit_price:
-          item.unit_price != null ? Number(item.unit_price) : null,
-        price: item.unit_price != null ? Number(item.unit_price) : 0,
-        place: item.place ?? null,
-      })),
+      items,
       createdAt: invoice.createdAt,
       updatedAt: invoice.updatedAt,
     };
   }
 
-  async findAll() {
-    const invoices = await this.invoicesRepository.find({
-      relations: ['customer', 'items'],
-      order: { id: 'DESC' },
-    });
+  private async loadInvoices(id?: number): Promise<Invoice[]> {
+    if (id != null) {
+      const rows: Invoice[] = await this.invoicesRepository.query(
+        `
+        SELECT
+          id,
+          invoice_number,
+          amount,
+          discount,
+          delivery_price,
+          total_amount,
+          type,
+          customer_id,
+          "createdAt",
+          "updatedAt"
+        FROM invoices
+        WHERE id = $1
+        LIMIT 1
+        `,
+        [id],
+      );
+      return rows;
+    }
 
-    // Return plain objects to avoid circular JSON (invoice <-> items).
-    return invoices.map((invoice) => this.toInvoiceListItem(invoice));
+    return this.invoicesRepository.query(
+      `
+      SELECT
+        id,
+        invoice_number,
+        amount,
+        discount,
+        delivery_price,
+        total_amount,
+        type,
+        customer_id,
+        "createdAt",
+        "updatedAt"
+      FROM invoices
+      ORDER BY id DESC
+      `,
+    );
+  }
+
+  async findAll() {
+    try {
+      // Plain SQL only — no TypeORM relations (avoids circular JSON / bad joins).
+      const invoices = await this.loadInvoices();
+
+      const customerMap = await this.loadCustomers(
+        [...new Set(invoices.map((invoice) => Number(invoice.customer_id)))],
+      );
+      const allItems = await this.loadInvoiceItems(
+        invoices.map((invoice) => Number(invoice.id)),
+      );
+      const itemsByInvoice = new Map<number, Array<Record<string, unknown>>>();
+
+      for (const item of allItems) {
+        const invoiceId = Number(item.invoice_id);
+        const list = itemsByInvoice.get(invoiceId) ?? [];
+        list.push(item);
+        itemsByInvoice.set(invoiceId, list);
+      }
+
+      return invoices.map((invoice) =>
+        this.mapInvoiceRow(
+          invoice,
+          customerMap.get(Number(invoice.customer_id)),
+          itemsByInvoice.get(Number(invoice.id)) ?? [],
+        ),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`findAll invoices failed: ${message}`);
+      throw new InternalServerErrorException(message);
+    }
   }
 
   async findOne(id: number) {
-    const invoice = await this.invoicesRepository.findOne({
-      where: { id },
-      relations: ['customer', 'items'],
-    });
+    try {
+      const rows = await this.loadInvoices(id);
+      const invoice = rows[0];
+      if (!invoice) {
+        throw new NotFoundException(`Invoice with ID ${id} not found`);
+      }
 
-    if (!invoice) {
-      throw new NotFoundException(`Invoice with ID ${id} not found`);
-    }
+      const customerMap = await this.loadCustomers([
+        Number(invoice.customer_id),
+      ]);
+      const items = await this.loadInvoiceItems([Number(invoice.id)]);
 
-    const base = this.toInvoiceListItem(invoice);
-
-    // Enrich line items with product details for edit/print screens.
-    if (invoice.items && invoice.items.length > 0) {
-      const itemsWithDetails = await Promise.all(
-        invoice.items.map(async (invoiceItem) => {
+      const enrichedItems = await Promise.all(
+        items.map(async (item) => {
           let itemDetails: CeramicItem | HealthyItem | null = null;
+          const itemType = String(item.item_type);
+          const itemId = Number(item.item_id);
 
-          if (
-            invoiceItem.item_type === ItemType.CERAMIC &&
-            invoiceItem.ceramic_item_id
-          ) {
+          if (itemType === ItemType.CERAMIC && itemId) {
             itemDetails = await this.ceramicItemsRepository.findOne({
-              where: { id: invoiceItem.ceramic_item_id },
+              where: { id: itemId },
             });
-          } else if (
-            invoiceItem.item_type === ItemType.HEALTHY &&
-            invoiceItem.healthy_item_id
-          ) {
+          } else if (itemType === ItemType.HEALTHY && itemId) {
             itemDetails = await this.healthyItemsRepository.findOne({
-              where: { id: invoiceItem.healthy_item_id },
+              where: { id: itemId },
             });
           }
 
           const catalogPrice = itemDetails ? Number(itemDetails.price) : 0;
           const unitPrice =
-            invoiceItem.unit_price != null
-              ? Number(invoiceItem.unit_price)
-              : catalogPrice;
+            item.unit_price != null ? Number(item.unit_price) : catalogPrice;
 
           const catalogDetails: Record<string, unknown> = {};
           let stock_quantity: number | undefined;
-
           if (itemDetails) {
             const details = itemDetails as unknown as Record<string, unknown>;
             for (const [key, value] of Object.entries(details)) {
-              if (key === 'quantity') {
-                stock_quantity = Number(value) || 0;
-              } else if (key !== 'password') {
-                catalogDetails[key] = value;
-              }
+              if (key === 'quantity') stock_quantity = Number(value) || 0;
+              else catalogDetails[key] = value;
             }
           }
 
           return {
             ...catalogDetails,
-            id: invoiceItem.id,
-            invoice_id: invoiceItem.invoice_id,
-            item_id:
-              invoiceItem.item_type === ItemType.CERAMIC
-                ? invoiceItem.ceramic_item_id
-                : invoiceItem.healthy_item_id,
-            item_type: invoiceItem.item_type,
-            place: invoiceItem.place ?? null,
+            ...item,
             unit_price: unitPrice,
-            stock_quantity,
             price: unitPrice,
-            quantity: Number(invoiceItem.quantity) || 0,
+            stock_quantity,
           };
         }),
       );
 
-      return { ...base, items: itemsWithDetails };
+      return this.mapInvoiceRow(
+        invoice,
+        customerMap.get(Number(invoice.customer_id)),
+        enrichedItems,
+      );
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`findOne invoice failed: ${message}`);
+      throw new InternalServerErrorException(message);
     }
-
-    return base;
   }
 
   async findByInvoiceNumber(invoice_number: string): Promise<Invoice | null> {
