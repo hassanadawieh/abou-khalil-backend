@@ -32,11 +32,14 @@ services:
       - "${PORT:-6000}:6000"
     environment:
       PORT: 6000
+      NODE_ENV: production
       DB_HOST: db
       DB_PORT: 5432
       DB_USERNAME: ${DB_USERNAME:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DB_NAME: ${DB_NAME:-abk_db}
+      DB_SYNC: "false"
+      DB_LOGGING: ${DB_LOGGING:-false}
       CORS_ORIGIN: ${CORS_ORIGIN:-https://abou-khalil.vercel.app,http://localhost:3000}
       SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-hassan}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-P@ssw0rd}

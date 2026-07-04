@@ -51,9 +51,14 @@ import { SeedCommand } from './database/commands/seed.command';
           Notification,
           EmployeeSalary,
         ],
-        synchronize: true,
-        logging: true,
+        // Never use synchronize in production — it drop/re-adds columns and crashes
+        // when changing integer -> decimal. Schema is applied by scripts/fix-schema.sql.
+        synchronize:
+          config.get<string>('DB_SYNC', 'false') === 'true' &&
+          config.get<string>('NODE_ENV') !== 'production',
+        logging: config.get<string>('DB_LOGGING', 'false') === 'true',
       }),
+
     }),
     TypeOrmModule.forFeature([Permission, Role, User]),
   ],
