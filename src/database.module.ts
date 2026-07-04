@@ -57,8 +57,6 @@ import { SeedCommand } from './database/commands/seed.command';
         synchronize: false,
         logging: config.get<string>('DB_LOGGING', 'false') === 'true',
       }),
-
-
     }),
     TypeOrmModule.forFeature([Permission, Role, User]),
   ],
