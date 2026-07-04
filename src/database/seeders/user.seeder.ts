@@ -34,21 +34,43 @@ export class UserSeeder {
       relations: ['role'],
     });
 
+    const resetPassword =
+      process.env.SEED_ADMIN_RESET_PASSWORD === 'true' ||
+      process.env.SEED_ADMIN_RESET_PASSWORD === '1';
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     if (existingUser) {
-      if (existingUser.role_id === superAdminRole.id) {
-        console.log(
-          `User '${username}' already exists with superAdmin role — skipping`,
-        );
+      let changed = false;
+
+      if (existingUser.role_id !== superAdminRole.id) {
+        existingUser.role_id = superAdminRole.id;
+        existingUser.role = superAdminRole;
+        changed = true;
+        console.log(`Updated user '${username}' to superAdmin role`);
+      }
+
+      if (resetPassword) {
+        existingUser.password = hashedPassword;
+        existingUser.phoneNumber = phoneNumber;
+        changed = true;
+        console.log(`Reset password for user '${username}'`);
+      }
+
+      if (changed) {
+        await this.userRepository.save(existingUser);
         return;
       }
 
-      existingUser.role_id = superAdminRole.id;
-      await this.userRepository.save(existingUser);
-      console.log(`Updated user '${username}' to superAdmin role`);
+      console.log(
+        `User '${username}' already exists with superAdmin role — skipping`,
+      );
+      console.log(
+        `Tip: set SEED_ADMIN_RESET_PASSWORD=true to reset the password to SEED_ADMIN_PASSWORD`,
+      );
       return;
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
     const user = this.userRepository.create({
       username,
       phoneNumber,

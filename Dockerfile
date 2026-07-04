@@ -19,6 +19,9 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
+# Required for in-app database backups (GET /api/backup)
+RUN apk add --no-cache postgresql-client
+
 COPY --from=builder /app/dist ./dist
 
 RUN mkdir -p public/uploads/items

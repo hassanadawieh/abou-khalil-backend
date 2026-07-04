@@ -16,6 +16,7 @@ import { ProductTypesModule } from './product-types/product-types.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { EmployeeSalariesModule } from './employee-salaries/employee-salaries.module';
+import { BackupModule } from './backup/backup.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { EmployeeSalariesModule } from './employee-salaries/employee-salaries.mo
     InvoicesModule,
     ItemsModule,
     BalanceModule,
+    BackupModule,
   ],
   controllers: [AppController],
   providers: [AppService],
