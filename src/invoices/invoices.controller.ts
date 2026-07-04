@@ -53,7 +53,7 @@ export class InvoicesController {
     @Body() createInvoiceDto: CreateInvoiceDto,
     @CurrentUser() _currentUser: User,
     @UserRole() _userRole?: Role,
-  ): Promise<Invoice> {
+  ) {
     return this.invoicesService.create(createInvoiceDto);
   }
 
@@ -69,7 +69,7 @@ export class InvoicesController {
   async findAll(
     @CurrentUser() _currentUser: User,
     @UserRole() _userRole?: Role,
-  ): Promise<Invoice[]> {
+  ) {
     return this.invoicesService.findAll();
   }
 
@@ -94,7 +94,7 @@ export class InvoicesController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() _currentUser: User,
     @UserRole() _userRole?: Role,
-  ): Promise<Invoice> {
+  ) {
     return this.invoicesService.findOne(id);
   }
 
@@ -123,7 +123,7 @@ export class InvoicesController {
     @Body() updateInvoiceDto: UpdateInvoiceDto,
     @CurrentUser() _currentUser: User,
     @UserRole() _userRole?: Role,
-  ): Promise<Invoice> {
+  ) {
     return this.invoicesService.update(id, updateInvoiceDto);
   }
 

@@ -207,7 +207,7 @@ export class InvoicesService {
     await invoiceItemsRepo.save(invoiceItem);
   }
 
-  async create(createInvoiceDto: CreateInvoiceDto): Promise<Invoice> {
+  async create(createInvoiceDto: CreateInvoiceDto) {
     if (
       !createInvoiceDto.items ||
       !Array.isArray(createInvoiceDto.items) ||
@@ -305,13 +305,59 @@ export class InvoicesService {
     return this.findOne(savedInvoiceId);
   }
 
-  async findAll(): Promise<Invoice[]> {
-    return this.invoicesRepository.find({
-      relations: ['customer', 'items'],
-    });
+  private toInvoiceListItem(invoice: Invoice) {
+    return {
+      id: invoice.id,
+      invoice_number: invoice.invoice_number,
+      amount: Number(invoice.amount) || 0,
+      discount: Number(invoice.discount) || 0,
+      delivery_price: Number(invoice.delivery_price) || 0,
+      total_amount: Number(invoice.total_amount) || 0,
+      type: invoice.type,
+      customer_id: invoice.customer_id,
+      customer: invoice.customer
+        ? {
+            id: invoice.customer.id,
+            firstName: invoice.customer.firstName,
+            lastName: invoice.customer.lastName,
+            phoneNumber1: invoice.customer.phoneNumber1,
+            phoneNumber2: invoice.customer.phoneNumber2,
+            city: invoice.customer.city,
+            amount: Number(invoice.customer.amount) || 0,
+          }
+        : null,
+      items: (invoice.items ?? []).map((item) => ({
+        id: item.id,
+        invoice_id: item.invoice_id,
+        item_type: item.item_type,
+        ceramic_item_id: item.ceramic_item_id ?? null,
+        healthy_item_id: item.healthy_item_id ?? null,
+        item_id:
+          item.item_type === ItemType.CERAMIC
+            ? item.ceramic_item_id
+            : item.healthy_item_id,
+        quantity: Number(item.quantity) || 0,
+        unit_price:
+          item.unit_price != null ? Number(item.unit_price) : null,
+        price: item.unit_price != null ? Number(item.unit_price) : 0,
+        place: item.place ?? null,
+      })),
+      createdAt: invoice.createdAt,
+      updatedAt: invoice.updatedAt,
+    };
   }
 
-  async findOne(id: number): Promise<Invoice> {
+  async findAll() {
+    const invoices = await this.invoicesRepository.find({
+      relations: ['customer', 'items'],
+      order: { id: 'DESC' },
+    });
+
+    // Return plain objects to avoid circular JSON (invoice <-> items).
+    return invoices.map((invoice) => this.toInvoiceListItem(invoice));
+  }
+
+  async findOne(id: number) {
     const invoice = await this.invoicesRepository.findOne({
       where: { id },
       relations: ['customer', 'items'],
@@ -321,11 +367,13 @@ export class InvoicesService {
       throw new NotFoundException(`Invoice with ID ${id} not found`);
     }
 
-    // Load full item details for each invoice item
+    const base = this.toInvoiceListItem(invoice);
+
+    // Enrich line items with product details for edit/print screens.
     if (invoice.items && invoice.items.length > 0) {
       const itemsWithDetails = await Promise.all(
-        invoice.items.map(async (invoiceItem): Promise<any> => {
-          let itemDetails: any = null;
+        invoice.items.map(async (invoiceItem) => {
+          let itemDetails: CeramicItem | HealthyItem | null = null;
 
           if (
             invoiceItem.item_type === ItemType.CERAMIC &&
@@ -343,27 +391,30 @@ export class InvoicesService {
             });
           }
 
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           const catalogPrice = itemDetails ? Number(itemDetails.price) : 0;
           const unitPrice =
             invoiceItem.unit_price != null
               ? Number(invoiceItem.unit_price)
               : catalogPrice;
 
-          let catalogDetails: Record<string, unknown> = {};
+          const catalogDetails: Record<string, unknown> = {};
           let stock_quantity: number | undefined;
 
           if (itemDetails) {
-            const { quantity, ...rest } = itemDetails as {
-              quantity: number;
-              [key: string]: unknown;
-            };
-            catalogDetails = rest;
-            stock_quantity = quantity;
+            const details = itemDetails as unknown as Record<string, unknown>;
+            for (const [key, value] of Object.entries(details)) {
+              if (key === 'quantity') {
+                stock_quantity = Number(value) || 0;
+              } else if (key !== 'password') {
+                catalogDetails[key] = value;
+              }
+            }
           }
 
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          const result: any = {
+          return {
+            ...catalogDetails,
+            id: invoiceItem.id,
+            invoice_id: invoiceItem.invoice_id,
             item_id:
               invoiceItem.item_type === ItemType.CERAMIC
                 ? invoiceItem.ceramic_item_id
@@ -371,22 +422,17 @@ export class InvoicesService {
             item_type: invoiceItem.item_type,
             place: invoiceItem.place ?? null,
             unit_price: unitPrice,
-            ...catalogDetails,
-            stock_quantity:
-              stock_quantity !== undefined
-                ? Number(stock_quantity) || 0
-                : undefined,
+            stock_quantity,
             price: unitPrice,
             quantity: Number(invoiceItem.quantity) || 0,
           };
-          return result;
         }),
       );
 
-      (invoice.items as unknown) = itemsWithDetails;
+      return { ...base, items: itemsWithDetails };
     }
 
-    return invoice;
+    return base;
   }
 
   async findByInvoiceNumber(invoice_number: string): Promise<Invoice | null> {
@@ -396,10 +442,7 @@ export class InvoicesService {
     });
   }
 
-  async update(
-    id: number,
-    updateInvoiceDto: UpdateInvoiceDto,
-  ): Promise<Invoice> {
+  async update(id: number, updateInvoiceDto: UpdateInvoiceDto) {
     await this.invoicesRepository.manager.transaction(async (manager) => {
       const invoicesRepo = manager.getRepository(Invoice);
       const invoiceItemsRepo = manager.getRepository(InvoiceItem);
