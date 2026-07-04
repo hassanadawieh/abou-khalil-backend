@@ -51,12 +51,12 @@ import { SeedCommand } from './database/commands/seed.command';
           Notification,
           EmployeeSalary,
         ],
-        // Creates tables from entities on an empty database.
-        // For a clean server install: docker compose down -v && ./deploy.sh
-        synchronize: true,
+        // Keep false in production. synchronize drop/re-adds columns and crashes
+        // the API (502). Fresh install: docker compose down -v, set true once, seed,
+        // then set false again — or use ./deploy.sh only on empty DB.
+        synchronize: false,
         logging: config.get<string>('DB_LOGGING', 'false') === 'true',
       }),
-
     }),
     TypeOrmModule.forFeature([Permission, Role, User]),
   ],
