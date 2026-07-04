@@ -51,12 +51,12 @@ import { SeedCommand } from './database/commands/seed.command';
           Notification,
           EmployeeSalary,
         ],
-        // ALWAYS false. TypeORM synchronize drop/re-adds columns and crashes
-        // production (healthy_items.quantity null values). Schema changes are
-        // applied only by scripts/fix-schema.sql in docker/entrypoint.sh.
-        synchronize: false,
+        // Creates tables from entities on an empty database.
+        // For a clean server install: docker compose down -v && ./deploy.sh
+        synchronize: true,
         logging: config.get<string>('DB_LOGGING', 'false') === 'true',
       }),
+
     }),
     TypeOrmModule.forFeature([Permission, Role, User]),
   ],
