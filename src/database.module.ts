@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AccessToken } from './auth/entities/access-token.entity';
 import { Role } from './roles/entities/role.entity';
@@ -22,33 +23,37 @@ import { SeedCommand } from './database/commands/seed.command';
 
 @Module({
   imports: [
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '5432', 10),
-      username: process.env.DB_USERNAME || 'postgres',
-      password: String(process.env.DB_PASSWORD || 'postgres'),
-      database: process.env.DB_NAME || 'abk_db',
-      entities: [
-        Role,
-        User,
-        AccessToken,
-        Employee,
-        Customer,
-        CustomerHistoryEntry,
-        Supplier,
-        Invoice,
-        CeramicItem,
-        HealthyItem,
-        InvoiceItem,
-        Permission,
-        ProductType,
-        Expense,
-        Notification,
-        EmployeeSalary,
-      ],
-      synchronize: true,
-      logging: true,
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres' as const,
+        host: config.get<string>('DB_HOST', 'localhost'),
+        port: parseInt(config.get<string>('DB_PORT', '5432'), 10),
+        username: config.get<string>('DB_USERNAME', 'postgres'),
+        password: config.get<string>('DB_PASSWORD', 'postgres'),
+        database: config.get<string>('DB_NAME', 'abk_db'),
+        entities: [
+          Role,
+          User,
+          AccessToken,
+          Employee,
+          Customer,
+          CustomerHistoryEntry,
+          Supplier,
+          Invoice,
+          CeramicItem,
+          HealthyItem,
+          InvoiceItem,
+          Permission,
+          ProductType,
+          Expense,
+          Notification,
+          EmployeeSalary,
+        ],
+        synchronize: true,
+        logging: true,
+      }),
     }),
     TypeOrmModule.forFeature([Permission, Role, User]),
   ],

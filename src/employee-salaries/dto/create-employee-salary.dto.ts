@@ -22,9 +22,11 @@ export class CreateEmployeeSalaryDto {
   @Max(12)
   month: number;
 
+  /** Defaults to the employee's base salary when omitted. */
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  amount: number;
+  amount?: number;
 
   @IsOptional()
   @IsBoolean()

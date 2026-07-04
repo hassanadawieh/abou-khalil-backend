@@ -79,7 +79,7 @@ export class InvoiceItem {
     description: 'Quantity ordered',
     example: 4,
   })
-  @Column()
+  @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
 
   @ApiProperty({
@@ -90,4 +90,12 @@ export class InvoiceItem {
   })
   @Column({ type: 'varchar', length: 255, nullable: true })
   place?: string;
+
+  @ApiProperty({
+    description: 'Unit selling price at the time of invoicing',
+    example: 50.0,
+    nullable: true,
+  })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  unit_price?: number;
 }

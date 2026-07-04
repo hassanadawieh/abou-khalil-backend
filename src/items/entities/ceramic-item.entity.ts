@@ -30,7 +30,7 @@ export class CeramicItem {
     description: 'Quantity in stock',
     example: 100,
   })
-  @Column()
+  @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
 
   @ApiProperty({
@@ -44,21 +44,21 @@ export class CeramicItem {
     description: 'Quantity per bag',
     example: 10,
   })
-  @Column()
+  @Column({ type: 'decimal', precision: 10, scale: 2 })
   bag_quantity: number;
 
   @ApiProperty({
     description: 'Width in cm',
     example: 25,
   })
-  @Column()
+  @Column({ type: 'decimal', precision: 10, scale: 2 })
   width: number;
 
   @ApiProperty({
     description: 'Height in cm',
     example: 30,
   })
-  @Column()
+  @Column({ type: 'decimal', precision: 10, scale: 2 })
   height: number;
 
   @ApiProperty({

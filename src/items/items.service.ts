@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as QRCode from 'qrcode';
@@ -6,6 +10,7 @@ import { promises as _fs } from 'fs';
 import * as _path from 'path';
 import { CeramicItem } from './entities/ceramic-item.entity';
 import { HealthyItem } from './entities/healthy-item.entity';
+import { ProductType } from '../product-types/entities/product-type.entity';
 import {
   CreateCeramicItemDto,
   CreateHealthyItemDto,
@@ -18,14 +23,107 @@ export class ItemsService {
     private ceramicItemsRepository: Repository<CeramicItem>,
     @InjectRepository(HealthyItem)
     private healthyItemsRepository: Repository<HealthyItem>,
+    @InjectRepository(ProductType)
+    private productTypesRepository: Repository<ProductType>,
   ) {}
+
+  private toDecimal(value: unknown, field: string): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      throw new BadRequestException(`${field} must be a valid number`);
+    }
+    return Number(parsed.toFixed(2));
+  }
+
+  private normalizeTypeId(typeId?: number | string | null): number | undefined {
+    if (typeId === undefined || typeId === null || typeId === '') {
+      return undefined;
+    }
+    const parsed = Number(typeId);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return undefined;
+    }
+    return Math.trunc(parsed);
+  }
+
+  private async validateProductTypeId(typeId?: number | null): Promise<void> {
+    const normalizedTypeId = this.normalizeTypeId(typeId);
+    if (normalizedTypeId === undefined) {
+      return;
+    }
+
+    const productType = await this.productTypesRepository.findOne({
+      where: { id: normalizedTypeId },
+    });
+
+    if (!productType) {
+      throw new BadRequestException(
+        `Product type with ID ${normalizedTypeId} does not exist`,
+      );
+    }
+  }
+
+  private normalizeCeramicData(createDto: CreateCeramicItemDto) {
+    const title = String(createDto.title ?? '').trim();
+    const bag = String(createDto.bag ?? '').trim();
+
+    if (!title) {
+      throw new BadRequestException('Title is required');
+    }
+    if (!bag) {
+      throw new BadRequestException('Bag is required');
+    }
+
+    const type_id = this.normalizeTypeId(createDto.type_id);
+
+    return {
+      title,
+      bag,
+      quantity: this.toDecimal(createDto.quantity, 'quantity'),
+      bag_quantity: this.toDecimal(createDto.bag_quantity, 'bag_quantity'),
+      width: this.toDecimal(createDto.width, 'width'),
+      height: this.toDecimal(createDto.height, 'height'),
+      price: this.toDecimal(createDto.price, 'price'),
+      main_price: this.toDecimal(createDto.main_price, 'main_price'),
+      type_id,
+      image: createDto.image,
+    };
+  }
+
+  private normalizeHealthyData(createDto: CreateHealthyItemDto) {
+    const title = String(createDto.title ?? '').trim();
+    const color = String(createDto.color ?? '').trim();
+
+    if (!title) {
+      throw new BadRequestException('Title is required');
+    }
+    if (!color) {
+      throw new BadRequestException('Color is required');
+    }
+
+    const type_id = this.normalizeTypeId(createDto.type_id);
+
+    return {
+      title,
+      color,
+      quantity: this.toDecimal(createDto.quantity, 'quantity'),
+      price: this.toDecimal(createDto.price, 'price'),
+      main_price: this.toDecimal(createDto.main_price, 'main_price'),
+      type_id,
+      image: createDto.image,
+    };
+  }
 
   // Ceramic Items
   async createCeramicItem(
     createDto: CreateCeramicItemDto,
   ): Promise<CeramicItem> {
-    const { image, ...itemData } = createDto;
-    const item = this.ceramicItemsRepository.create(itemData);
+    const { image, type_id, ...itemData } = this.normalizeCeramicData(createDto);
+    await this.validateProductTypeId(type_id);
+    const item = this.ceramicItemsRepository.create({
+      ...itemData,
+      ...(type_id !== undefined ? { type_id } : {}),
+    });
 
     // Save first, then update with QR code and optional image
     const savedItem = await this.ceramicItemsRepository.save(item);
@@ -63,7 +161,35 @@ export class ItemsService {
     updateDto: Partial<CreateCeramicItemDto>,
   ): Promise<CeramicItem> {
     const item = await this.findCeramicItem(id);
-    Object.assign(item, updateDto);
+    const normalized = this.normalizeCeramicData({
+      title: updateDto.title ?? item.title,
+      bag: updateDto.bag ?? item.bag,
+      quantity: updateDto.quantity ?? item.quantity,
+      bag_quantity: updateDto.bag_quantity ?? item.bag_quantity,
+      width: updateDto.width ?? item.width,
+      height: updateDto.height ?? item.height,
+      price: updateDto.price ?? item.price,
+      main_price: updateDto.main_price ?? item.main_price,
+      type_id:
+        updateDto.type_id !== undefined ? updateDto.type_id : item.type_id,
+      image: updateDto.image,
+    });
+
+    await this.validateProductTypeId(normalized.type_id);
+
+    item.title = normalized.title;
+    item.bag = normalized.bag;
+    item.quantity = normalized.quantity;
+    item.bag_quantity = normalized.bag_quantity;
+    item.width = normalized.width;
+    item.height = normalized.height;
+    item.price = normalized.price;
+    item.main_price = normalized.main_price;
+    item.type_id = normalized.type_id;
+    if (normalized.image) {
+      item.image_url = normalized.image;
+    }
+
     return this.ceramicItemsRepository.save(item);
   }
 
@@ -77,8 +203,12 @@ export class ItemsService {
   async createHealthyItem(
     createDto: CreateHealthyItemDto,
   ): Promise<HealthyItem> {
-    const { image, ...itemData } = createDto;
-    const item = this.healthyItemsRepository.create(itemData);
+    const { image, type_id, ...itemData } = this.normalizeHealthyData(createDto);
+    await this.validateProductTypeId(type_id);
+    const item = this.healthyItemsRepository.create({
+      ...itemData,
+      ...(type_id !== undefined ? { type_id } : {}),
+    });
 
     // Save first, then update with QR code and optional image
     const savedItem = await this.healthyItemsRepository.save(item);
@@ -116,7 +246,29 @@ export class ItemsService {
     updateDto: Partial<CreateHealthyItemDto>,
   ): Promise<HealthyItem> {
     const item = await this.findHealthyItem(id);
-    Object.assign(item, updateDto);
+    const normalized = this.normalizeHealthyData({
+      title: updateDto.title ?? item.title,
+      color: updateDto.color ?? item.color,
+      quantity: updateDto.quantity ?? item.quantity,
+      price: updateDto.price ?? item.price,
+      main_price: updateDto.main_price ?? item.main_price,
+      type_id:
+        updateDto.type_id !== undefined ? updateDto.type_id : item.type_id,
+      image: updateDto.image,
+    });
+
+    await this.validateProductTypeId(normalized.type_id);
+
+    item.title = normalized.title;
+    item.color = normalized.color;
+    item.quantity = normalized.quantity;
+    item.price = normalized.price;
+    item.main_price = normalized.main_price;
+    item.type_id = normalized.type_id;
+    if (normalized.image) {
+      item.image_url = normalized.image;
+    }
+
     return this.healthyItemsRepository.save(item);
   }
 

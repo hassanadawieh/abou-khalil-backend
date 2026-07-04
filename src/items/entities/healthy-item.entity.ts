@@ -30,7 +30,7 @@ export class HealthyItem {
     description: 'Quantity in stock',
     example: 500,
   })
-  @Column()
+  @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
 
   @ApiProperty({

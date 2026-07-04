@@ -94,7 +94,7 @@ export class InvoicesService {
       throw new BadRequestException('Quantity must be greater than 0');
     }
 
-    return normalizedQuantity;
+    return Number(normalizedQuantity.toFixed(2));
   }
 
   private async adjustStock(
@@ -104,7 +104,9 @@ export class InvoicesService {
     itemId: number,
     quantityDelta: number,
   ): Promise<void> {
-    if (quantityDelta === 0) {
+    // Decimal columns are returned as strings; always coerce before math.
+    const delta = Number(quantityDelta) || 0;
+    if (delta === 0) {
       return;
     }
 
@@ -115,13 +117,14 @@ export class InvoicesService {
         throw new NotFoundException(`Ceramic item with ID ${itemId} not found`);
       }
 
-      if (quantityDelta < 0 && ceramic.quantity < Math.abs(quantityDelta)) {
+      const currentQty = Number(ceramic.quantity) || 0;
+      if (delta < 0 && currentQty < Math.abs(delta)) {
         throw new BadRequestException(
           `Insufficient ceramic stock for item ${ceramic.title}`,
         );
       }
 
-      ceramic.quantity += quantityDelta;
+      ceramic.quantity = Number((currentQty + delta).toFixed(2));
       await ceramicRepo.save(ceramic);
       return;
     }
@@ -133,26 +136,62 @@ export class InvoicesService {
         throw new NotFoundException(`Healthy item with ID ${itemId} not found`);
       }
 
-      if (quantityDelta < 0 && healthy.quantity < Math.abs(quantityDelta)) {
+      const currentQty = Number(healthy.quantity) || 0;
+      if (delta < 0 && currentQty < Math.abs(delta)) {
         throw new BadRequestException(
           `Insufficient healthy stock for item ${healthy.title}`,
         );
       }
 
-      healthy.quantity += quantityDelta;
+      healthy.quantity = Number((currentQty + delta).toFixed(2));
       await healthyRepo.save(healthy);
     }
   }
 
+  private async getItemUnitPrice(
+    ceramicRepo: Repository<CeramicItem>,
+    healthyRepo: Repository<HealthyItem>,
+    itemType: ItemType,
+    itemId: number,
+  ): Promise<number> {
+    if (itemType === ItemType.CERAMIC) {
+      const ceramic = await ceramicRepo.findOne({ where: { id: itemId } });
+
+      if (!ceramic) {
+        throw new NotFoundException(`Ceramic item with ID ${itemId} not found`);
+      }
+
+      return Number(ceramic.price);
+    }
+
+    const healthy = await healthyRepo.findOne({ where: { id: itemId } });
+
+    if (!healthy) {
+      throw new NotFoundException(`Healthy item with ID ${itemId} not found`);
+    }
+
+    return Number(healthy.price);
+  }
+
   private async createInvoiceItemRecord(
     invoiceItemsRepo: Repository<InvoiceItem>,
+    ceramicRepo: Repository<CeramicItem>,
+    healthyRepo: Repository<HealthyItem>,
     invoiceId: number,
     itemData: InvoiceItemInput,
   ): Promise<void> {
+    const unit_price = await this.getItemUnitPrice(
+      ceramicRepo,
+      healthyRepo,
+      itemData.item_type,
+      itemData.item_id,
+    );
+
     const invoiceItem = invoiceItemsRepo.create({
       invoice_id: invoiceId,
       item_type: itemData.item_type,
       quantity: itemData.quantity,
+      unit_price,
       place:
         typeof itemData.place === 'string' && itemData.place.trim() !== ''
           ? itemData.place.trim()
@@ -169,13 +208,26 @@ export class InvoicesService {
   }
 
   async create(createInvoiceDto: CreateInvoiceDto): Promise<Invoice> {
+    if (
+      !createInvoiceDto.items ||
+      !Array.isArray(createInvoiceDto.items) ||
+      createInvoiceDto.items.length === 0
+    ) {
+      throw new BadRequestException('Invoice must include at least one item');
+    }
+
     // Calculate total_amount = amount - discount + delivery_price
-    const discount = createInvoiceDto.discount || 0;
-    const delivery_price = createInvoiceDto.delivery_price || 0;
-    const total_amount = createInvoiceDto.amount - discount + delivery_price;
+    const amount = Number(createInvoiceDto.amount) || 0;
+    const discount = Number(createInvoiceDto.discount) || 0;
+    const delivery_price = Number(createInvoiceDto.delivery_price) || 0;
+    const total_amount = Number((amount - discount + delivery_price).toFixed(2));
 
     if (total_amount < 0) {
       throw new BadRequestException('Discount cannot be greater than amount');
+    }
+
+    if (!createInvoiceDto.customer_id) {
+      throw new BadRequestException('Customer is required');
     }
 
     // Use a transaction so invoice + items + stock updates are atomic
@@ -198,12 +250,12 @@ export class InvoicesService {
 
         const invoice = invoicesRepo.create({
           invoice_number,
-          amount: createInvoiceDto.amount,
+          amount,
           discount,
           delivery_price,
           total_amount,
           type: createInvoiceDto.type,
-          customer_id: createInvoiceDto.customer_id,
+          customer_id: Number(createInvoiceDto.customer_id),
         });
 
         const savedInvoice = await invoicesRepo.save(invoice);
@@ -238,6 +290,8 @@ export class InvoicesService {
 
           await this.createInvoiceItemRecord(
             invoiceItemsRepo,
+            ceramicRepo,
+            healthyRepo,
             savedInvoice.id,
             normalizedItem,
           );
@@ -290,15 +344,40 @@ export class InvoicesService {
           }
 
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          const catalogPrice = itemDetails ? Number(itemDetails.price) : 0;
+          const unitPrice =
+            invoiceItem.unit_price != null
+              ? Number(invoiceItem.unit_price)
+              : catalogPrice;
+
+          let catalogDetails: Record<string, unknown> = {};
+          let stock_quantity: number | undefined;
+
+          if (itemDetails) {
+            const { quantity, ...rest } = itemDetails as {
+              quantity: number;
+              [key: string]: unknown;
+            };
+            catalogDetails = rest;
+            stock_quantity = quantity;
+          }
+
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           const result: any = {
             item_id:
               invoiceItem.item_type === ItemType.CERAMIC
                 ? invoiceItem.ceramic_item_id
                 : invoiceItem.healthy_item_id,
-            quantity: invoiceItem.quantity,
             item_type: invoiceItem.item_type,
             place: invoiceItem.place ?? null,
-            ...(itemDetails || {}),
+            unit_price: unitPrice,
+            ...catalogDetails,
+            stock_quantity:
+              stock_quantity !== undefined
+                ? Number(stock_quantity) || 0
+                : undefined,
+            price: unitPrice,
+            quantity: Number(invoiceItem.quantity) || 0,
           };
           return result;
         }),
@@ -340,32 +419,46 @@ export class InvoicesService {
       const previousTotalAmount = Number(invoiceEntity.total_amount);
       const previousCustomerId = invoiceEntity.customer_id;
 
-      if (
-        updateInvoiceDto.amount !== undefined ||
-        updateInvoiceDto.discount !== undefined ||
-        updateInvoiceDto.delivery_price !== undefined
-      ) {
-        const amount = updateInvoiceDto.amount ?? invoiceEntity.amount;
-        const discount = updateInvoiceDto.discount ?? invoiceEntity.discount;
-        const delivery_price =
-          updateInvoiceDto.delivery_price ?? invoiceEntity.delivery_price;
-        const total_amount = amount - discount + delivery_price;
-
-        if (total_amount < 0) {
-          throw new BadRequestException(
-            'Discount cannot be greater than amount',
-          );
-        }
-
-        Object.assign(updateInvoiceDto, { total_amount });
-      }
-
       const { items, ...invoiceFields } = updateInvoiceDto as unknown as {
         items?: InvoiceItemInput[];
         [k: string]: unknown;
       };
 
-      Object.assign(invoiceEntity, invoiceFields);
+      if (invoiceFields.amount !== undefined) {
+        invoiceEntity.amount = Number(invoiceFields.amount) || 0;
+      }
+      if (invoiceFields.discount !== undefined) {
+        invoiceEntity.discount = Number(invoiceFields.discount) || 0;
+      }
+      if (invoiceFields.delivery_price !== undefined) {
+        invoiceEntity.delivery_price =
+          Number(invoiceFields.delivery_price) || 0;
+      }
+      if (invoiceFields.type !== undefined) {
+        invoiceEntity.type = invoiceFields.type as Invoice['type'];
+      }
+      if (invoiceFields.customer_id !== undefined) {
+        invoiceEntity.customer_id = Number(invoiceFields.customer_id);
+      }
+
+      const amount = Number(invoiceEntity.amount) || 0;
+      const discount = Number(invoiceEntity.discount) || 0;
+      const delivery_price = Number(invoiceEntity.delivery_price) || 0;
+      const total_amount = Number(
+        (amount - discount + delivery_price).toFixed(2),
+      );
+
+      if (total_amount < 0) {
+        throw new BadRequestException(
+          'Discount cannot be greater than amount',
+        );
+      }
+
+      invoiceEntity.amount = amount;
+      invoiceEntity.discount = discount;
+      invoiceEntity.delivery_price = delivery_price;
+      invoiceEntity.total_amount = total_amount;
+
       await invoicesRepo.save(invoiceEntity);
 
       const nextTotalAmount = Number(invoiceEntity.total_amount);
@@ -422,7 +515,7 @@ export class InvoicesService {
             healthyRepo,
             existingItem.item_type,
             existingItemId,
-            existingItem.quantity,
+            Number(existingItem.quantity) || 0,
           );
         }
 
@@ -446,6 +539,8 @@ export class InvoicesService {
 
           await this.createInvoiceItemRecord(
             invoiceItemsRepo,
+            ceramicRepo,
+            healthyRepo,
             invoiceEntity.id,
             normalizedItem,
           );
@@ -488,7 +583,7 @@ export class InvoicesService {
           healthyRepo,
           existingItem.item_type,
           existingItemId,
-          existingItem.quantity,
+          Number(existingItem.quantity) || 0,
         );
       }
 
