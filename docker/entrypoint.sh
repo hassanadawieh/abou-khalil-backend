@@ -19,4 +19,17 @@ setTimeout(() => process.exit(1), 2000);
 done
 
 echo "PostgreSQL is ready."
+
+if [ -f /app/scripts/fix-schema.sql ]; then
+  echo "Applying database schema fixes..."
+  PGPASSWORD="${DB_PASSWORD}" psql \
+    -h "${host}" \
+    -p "${port}" \
+    -U "${DB_USERNAME:-postgres}" \
+    -d "${DB_NAME:-abk_db}" \
+    -v ON_ERROR_STOP=0 \
+    -f /app/scripts/fix-schema.sql \
+    || echo "Warning: some schema fix statements failed (see above)."
+fi
+
 exec "$@"

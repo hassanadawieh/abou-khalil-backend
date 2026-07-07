@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, QueryFailedError, Repository } from 'typeorm';
 import { Invoice } from './entities/invoice.entity';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
@@ -100,9 +100,9 @@ export class InvoicesService {
     await historyRepo.query(
       `
       INSERT INTO customer_history_entries
-        (customer_id, invoice_id, type, amount, note)
+        (customer_id, invoice_id, type, amount, note, "createdAt")
       VALUES
-        ($1, $2, $3, $4, NULL)
+        ($1, $2, $3, $4, NULL, NOW())
       `,
       [
         customerId,
@@ -111,6 +111,55 @@ export class InvoicesService {
         safeAmount,
       ],
     );
+  }
+
+  private rethrowDbError(error: unknown): never {
+    if (
+      error instanceof BadRequestException ||
+      error instanceof NotFoundException
+    ) {
+      throw error;
+    }
+
+    if (error instanceof QueryFailedError) {
+      const driver = error.driverError as {
+        code?: string;
+        detail?: string;
+        column?: string;
+        message?: string;
+      };
+      const detail =
+        driver.detail || driver.message || error.message;
+
+      this.logger.error(
+        `Database error [${driver.code ?? 'unknown'}]: ${detail}`,
+      );
+
+      if (driver.code === '23503') {
+        throw new BadRequestException(`Related record not found: ${detail}`);
+      }
+      if (driver.code === '23502') {
+        throw new BadRequestException(
+          `Missing required value${driver.column ? ` (${driver.column})` : ''}: ${detail}`,
+        );
+      }
+      if (driver.code === '42703') {
+        throw new InternalServerErrorException(
+          `Database schema is out of date (missing column). Redeploy the API so fix-schema.sql runs.`,
+        );
+      }
+      if (driver.code === '25P02') {
+        throw new InternalServerErrorException(
+          'Invoice save failed due to a database error. Check API logs for the first error in this request.',
+        );
+      }
+
+      throw new InternalServerErrorException(detail);
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    this.logger.error(`Unexpected error: ${message}`);
+    throw new InternalServerErrorException(message);
   }
 
   private normalizeQuantity(quantity: unknown): number {
@@ -233,44 +282,24 @@ export class InvoicesService {
         ? itemData.place.trim()
         : null;
 
-    // Plain SQL insert — avoids TypeORM relation/FK mapping bugs.
-    try {
-      await invoiceItemsRepo.query(
-        `
-        INSERT INTO invoice_items
-          (invoice_id, item_type, ceramic_item_id, healthy_item_id, quantity, place, unit_price)
-        VALUES
-          ($1, $2, $3, $4, $5, $6, $7)
-        `,
-        [
-          invoiceId,
-          itemData.item_type,
-          itemData.item_type === ItemType.CERAMIC ? itemData.item_id : null,
-          itemData.item_type === ItemType.HEALTHY ? itemData.item_id : null,
-          itemData.quantity,
-          place,
-          Number(unit_price) || 0,
-        ],
-      );
-    } catch {
-      // Fallback for DBs without unit_price column.
-      await invoiceItemsRepo.query(
-        `
-        INSERT INTO invoice_items
-          (invoice_id, item_type, ceramic_item_id, healthy_item_id, quantity, place)
-        VALUES
-          ($1, $2, $3, $4, $5, $6)
-        `,
-        [
-          invoiceId,
-          itemData.item_type,
-          itemData.item_type === ItemType.CERAMIC ? itemData.item_id : null,
-          itemData.item_type === ItemType.HEALTHY ? itemData.item_id : null,
-          itemData.quantity,
-          place,
-        ],
-      );
-    }
+    // Plain SQL insert — no try/catch here: a failed INSERT aborts the PG transaction.
+    await invoiceItemsRepo.query(
+      `
+      INSERT INTO invoice_items
+        (invoice_id, item_type, ceramic_item_id, healthy_item_id, quantity, place, unit_price)
+      VALUES
+        ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      [
+        invoiceId,
+        itemData.item_type,
+        itemData.item_type === ItemType.CERAMIC ? itemData.item_id : null,
+        itemData.item_type === ItemType.HEALTHY ? itemData.item_id : null,
+        itemData.quantity,
+        place,
+        Number(unit_price) || 0,
+      ],
+    );
   }
 
   async create(createInvoiceDto: CreateInvoiceDto) {
@@ -357,9 +386,9 @@ export class InvoicesService {
           const inserted: Array<{ id: number }> = await invoicesRepo.query(
             `
             INSERT INTO invoices
-              (invoice_number, amount, discount, delivery_price, total_amount, type, customer_id)
+              (invoice_number, amount, discount, delivery_price, total_amount, type, customer_id, "createdAt", "updatedAt")
             VALUES
-              ($1, $2, $3, $4, $5, $6, $7)
+              ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
             RETURNING id
             `,
             [
@@ -416,15 +445,7 @@ export class InvoicesService {
 
       return this.findOne(savedInvoiceId);
     } catch (error) {
-      if (
-        error instanceof BadRequestException ||
-        error instanceof NotFoundException
-      ) {
-        throw error;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`create invoice failed: ${message}`);
-      throw new InternalServerErrorException(message);
+      this.rethrowDbError(error);
     }
   }
 
