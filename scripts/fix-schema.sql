@@ -57,6 +57,15 @@ ALTER TABLE healthy_items
 
 UPDATE healthy_items SET quantity = 0 WHERE quantity IS NULL;
 
+-- ceramic_items: small box (صندوق) m²
+ALTER TABLE ceramic_items
+  ADD COLUMN IF NOT EXISTS sandouq_m2 numeric(10,2) DEFAULT 0;
+
+UPDATE ceramic_items SET sandouq_m2 = 0 WHERE sandouq_m2 IS NULL;
+
+ALTER TABLE ceramic_items
+  ALTER COLUMN bag SET DEFAULT '';
+
 -- employee_salaries FK
 DELETE FROM employee_salaries
 WHERE employee_id IS NOT NULL

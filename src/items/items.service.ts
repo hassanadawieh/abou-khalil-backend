@@ -70,9 +70,6 @@ export class ItemsService {
     if (!title) {
       throw new BadRequestException('Title is required');
     }
-    if (!bag) {
-      throw new BadRequestException('Bag is required');
-    }
 
     const type_id = this.normalizeTypeId(createDto.type_id);
 
@@ -81,6 +78,7 @@ export class ItemsService {
       bag,
       quantity: this.toDecimal(createDto.quantity, 'quantity'),
       bag_quantity: this.toDecimal(createDto.bag_quantity, 'bag_quantity'),
+      sandouq_m2: this.toDecimal(createDto.sandouq_m2 ?? 0, 'sandouq_m2'),
       width: this.toDecimal(createDto.width, 'width'),
       height: this.toDecimal(createDto.height, 'height'),
       price: this.toDecimal(createDto.price, 'price'),
@@ -166,6 +164,7 @@ export class ItemsService {
       bag: updateDto.bag ?? item.bag,
       quantity: updateDto.quantity ?? item.quantity,
       bag_quantity: updateDto.bag_quantity ?? item.bag_quantity,
+      sandouq_m2: updateDto.sandouq_m2 ?? item.sandouq_m2,
       width: updateDto.width ?? item.width,
       height: updateDto.height ?? item.height,
       price: updateDto.price ?? item.price,
@@ -181,6 +180,7 @@ export class ItemsService {
     item.bag = normalized.bag;
     item.quantity = normalized.quantity;
     item.bag_quantity = normalized.bag_quantity;
+    item.sandouq_m2 = normalized.sandouq_m2;
     item.width = normalized.width;
     item.height = normalized.height;
     item.price = normalized.price;

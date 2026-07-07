@@ -27,25 +27,33 @@ export class CeramicItem {
   title: string;
 
   @ApiProperty({
-    description: 'Quantity in stock',
-    example: 100,
+    description: 'Total stock in square meters (m²)',
+    example: 120.5,
   })
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
 
   @ApiProperty({
-    description: 'Bag size/type',
-    example: 'Large',
+    description: 'Optional tray (طبلية) label or note',
+    example: 'طبلية كبيرة',
+    required: false,
   })
-  @Column()
+  @Column({ default: '' })
   bag: string;
 
   @ApiProperty({
-    description: 'Quantity per bag',
+    description: 'Square meters (m²) per tray (طبلية)',
     example: 10,
   })
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   bag_quantity: number;
+
+  @ApiProperty({
+    description: 'Square meters (m²) per small box (صندوق)',
+    example: 2,
+  })
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  sandouq_m2: number;
 
   @ApiProperty({
     description: 'Width in cm',

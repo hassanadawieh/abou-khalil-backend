@@ -16,14 +16,24 @@ export class CreateCeramicItemDto {
   @ApiProperty({ example: 'White Ceramic Plate' })
   title: string;
 
-  @ApiProperty({ example: 100 })
+  @ApiProperty({ example: 120.5, description: 'Total stock in m²' })
   quantity: number;
 
-  @ApiProperty({ example: 'Large' })
-  bag: string;
+  @ApiProperty({
+    example: 'طبلية كبيرة',
+    description: 'Optional tray (طبلية) label',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  bag?: string;
 
-  @ApiProperty({ example: 10 })
+  @ApiProperty({ example: 10, description: 'm² per tray (طبلية)' })
   bag_quantity: number;
+
+  @ApiProperty({ example: 2, description: 'm² per small box (صندوق)' })
+  @IsOptional()
+  sandouq_m2?: number;
 
   @ApiProperty({ example: 25 })
   width: number;
